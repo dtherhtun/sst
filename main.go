@@ -85,7 +85,28 @@ func main() {
 
 	flag.Parse()
 
-	validateFlags(oldContext, newContext, oldNamespace, newNamespace)
+	currentNs := "default"
+	var err error
+	if oldContext == "" {
+		currentNs, err = getCurrentNamespace(kubeconfig, "")
+		if err != nil {
+			log.Printf("Error getting current namespace: %v", err)
+		}
+	}
+
+	if oldNamespace == "" {
+		oldNamespace = currentNs
+		fmt.Printf("Using current namespace %s as source namespace\n", oldNamespace)
+	}
+
+	if newNamespace == "" {
+		newNamespace = oldNamespace
+		fmt.Printf("Using %s as destination namespace\n", newNamespace)
+	}
+
+	if secretName != "" && oldNamespace == "" {
+		log.Fatal("When specifying a secret name, you must also specify the source namespace (--old-namespace)")
+	}
 
 	clients := setupClients(kubeconfig, oldContext, newContext, ssns)
 
@@ -116,7 +137,6 @@ func main() {
 	}
 
 	var secrets *corev1.SecretList
-	var err error
 
 	if secretName != "" {
 		secret, err := clients.oldClient.CoreV1().Secrets(oldNamespace).Get(context.TODO(), secretName, metav1.GetOptions{})
@@ -264,17 +284,33 @@ type clients struct {
 }
 
 func setupClients(kubeconfig, oldContext, newContext, ssns string) *clients {
-	oldClient, err := createKubernetesClientWithContext(kubeconfig, oldContext)
+	var err error
+	var oldClient, newClient *kubernetes.Clientset
+
+	if oldContext == "" {
+		oldClient, err = createKubernetesClient(kubeconfig)
+	} else {
+		oldClient, err = createKubernetesClientWithContext(kubeconfig, oldContext)
+	}
 	if err != nil {
 		log.Fatalf("Error creating client for old context: %v", err)
 	}
 
-	newClient, err := createKubernetesClientWithContext(kubeconfig, newContext)
+	if newContext == "" {
+		newClient, err = createKubernetesClient(kubeconfig)
+	} else {
+		newClient, err = createKubernetesClientWithContext(kubeconfig, newContext)
+	}
 	if err != nil {
 		log.Fatalf("Error creating client for new context: %v", err)
 	}
 
-	sealedSecretsClient, err := createSealedSecretsClient(kubeconfig, newContext)
+	var sealedSecretsClient *sealsecretclient.Clientset
+	if newContext == "" {
+		sealedSecretsClient, err = createSealedSecretsClient(kubeconfig, "")
+	} else {
+		sealedSecretsClient, err = createSealedSecretsClient(kubeconfig, newContext)
+	}
 	if err != nil {
 		log.Fatalf("Error creating sealed secrets client: %v", err)
 	}
@@ -292,17 +328,8 @@ func setupClients(kubeconfig, oldContext, newContext, ssns string) *clients {
 	}
 }
 
-func validateFlags(oldContext, newContext, oldNamespace, newNamespace string) {
-	if oldContext == "" || newContext == "" {
-		log.Fatal("Both old and new contexts must be specified")
-	}
-	if oldNamespace == "" || newNamespace == "" {
-		log.Fatal("Both old and new namespaces must be specified")
-	}
-}
-
 func printSummary(total, success, skipped, failed int, outputDir string, exportMode ExportMode, duration time.Duration) {
-	fmt.Printf("\nMigration complete in %v:\n", duration)
+	fmt.Printf("\nSealing complete in %v:\n", duration)
 	fmt.Printf("- Total secrets found: %d\n", total)
 	fmt.Printf("- Successfully processed: %d\n", success)
 	fmt.Printf("- Skipped: %d\n", skipped)
@@ -403,4 +430,29 @@ func parseKeyValueFile(filePath string) (map[string][]byte, error) {
 	}
 
 	return result, nil
+}
+
+func getCurrentNamespace(kubeconfig string, context string) (string, error) {
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+	var config clientcmd.ClientConfig
+
+	if context == "" {
+		config = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{})
+	} else {
+		configOverrides := &clientcmd.ConfigOverrides{CurrentContext: context}
+		config = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides)
+	}
+
+	namespace, _, err := config.Namespace()
+	return namespace, err
+}
+
+func createKubernetesClient(kubeConfig string) (*kubernetes.Clientset, error) {
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeConfig}
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, &clientcmd.ConfigOverrides{}).ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("error loading default kubeconfig: %v", err)
+	}
+
+	return kubernetes.NewForConfig(config)
 }
