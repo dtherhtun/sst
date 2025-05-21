@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +27,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/yaml"
 )
+
+type multiFlag []string
 
 type ExportMode string
 
@@ -51,9 +55,19 @@ type SecretProcessor struct {
 	wg                  sync.WaitGroup
 }
 
+func (f *multiFlag) String() string {
+	return strings.Join(*f, ", ")
+}
+
+func (f *multiFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
 func main() {
 	start := time.Now()
-	var kubeconfig, oldContext, newContext, oldNamespace, newNamespace, exportMode, outputDir, ssns string
+	var kubeconfig, oldContext, newContext, oldNamespace, newNamespace, exportMode, outputDir, ssns, secretName string
+	var fromLiterals, fromFiles multiFlag
 
 	if home := homedir.HomeDir(); home != "" {
 		flag.StringVar(&kubeconfig, "kubeconfig", filepath.Join(home, ".kube", "config"), "path to kubeconfig file")
@@ -65,6 +79,9 @@ func main() {
 	flag.StringVar(&exportMode, "export-mode", string(ExportModeYAML), "Export mode: 'yaml' or 'direct'")
 	flag.StringVar(&outputDir, "output-dir", "sealed-secrets", "Output directory for YAML files")
 	flag.StringVar(&ssns, "sealed-secret-ns", "kube-system", "Sealed secrets namespace")
+	flag.StringVar(&secretName, "secret-name", "", "Specific secret name to process (optional)")
+	flag.Var(&fromLiterals, "from-literal", "Key-value pairs to inject into secret (can be used multiple times)")
+	flag.Var(&fromFiles, "from-file", "Files containing key-value pairs to inject into secret (can be used multiple times)")
 
 	flag.Parse()
 
@@ -78,12 +95,46 @@ func main() {
 		}
 	}
 
-	secrets, err := clients.oldClient.CoreV1().Secrets(oldNamespace).List(context.TODO(), metav1.ListOptions{})
-	if err != nil {
-		log.Fatalf("Error getting secrets from old cluster: %v", err)
+	additionalData := make(map[string][]byte)
+
+	for _, literal := range fromLiterals {
+		parts := strings.SplitN(literal, "=", 2)
+		if len(parts) != 2 {
+			log.Fatalf("Invalid format for --from-literal: %s", literal)
+		}
+		additionalData[parts[0]] = []byte(parts[1])
 	}
 
-	fmt.Printf("Found %d secrets in namespace %s (context: %s)\n", len(secrets.Items), oldNamespace, oldContext)
+	for _, filePath := range fromFiles {
+		kv, err := parseKeyValueFile(filePath)
+		if err != nil {
+			log.Fatalf("Error parsing file %s: %v", filePath, err)
+		}
+		for k, v := range kv {
+			additionalData[k] = v
+		}
+	}
+
+	var secrets *corev1.SecretList
+	var err error
+
+	if secretName != "" {
+		secret, err := clients.oldClient.CoreV1().Secrets(oldNamespace).Get(context.TODO(), secretName, metav1.GetOptions{})
+		if err != nil {
+			log.Fatalf("Error getting secret %s: %v", secretName, err)
+		}
+		secrets = &corev1.SecretList{
+			Items: []corev1.Secret{*secret},
+		}
+		fmt.Printf("Found secret %s in namespace %s (context: %s)\n", secretName, oldNamespace, oldContext)
+	} else {
+		secrets, err = clients.oldClient.CoreV1().Secrets(oldNamespace).List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			log.Fatalf("Error getting secrets from old cluster: %v", err)
+		}
+
+		fmt.Printf("Found %d secrets in namespace %s (context: %s)\n", len(secrets.Items), oldNamespace, oldContext)
+	}
 
 	processor := &SecretProcessor{
 		newNamespace:        newNamespace,
@@ -98,6 +149,17 @@ func main() {
 
 	for i := range secrets.Items {
 		secret := secrets.Items[i]
+
+		if secretName != "" && secret.Name == secretName && len(additionalData) > 0 {
+			if secret.Data == nil {
+				secret.Data = make(map[string][]byte)
+			}
+			for k, v := range additionalData {
+				secret.Data[k] = v
+				fmt.Printf("Injecting %s=%s into secret %s\n", k, v, secret.Name)
+			}
+		}
+
 		processor.wg.Add(1)
 		go func(s corev1.Secret) {
 			defer processor.wg.Done()
@@ -307,4 +369,38 @@ func fetchSealedSecretsPublicKey(client *kubernetes.Clientset, namespace string)
 	}
 
 	return publicKey, nil
+}
+
+func parseKeyValueFile(filePath string) (map[string][]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %v", err)
+	}
+	defer file.Close()
+
+	result := make(map[string][]byte)
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid format in file %s, expected key=value: %s", filePath, line)
+		}
+
+		key := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+
+		result[key] = []byte(value)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading file: %v", err)
+	}
+
+	return result, nil
 }
