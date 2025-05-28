@@ -19,7 +19,7 @@ go install github.com/dtherhtun/sst/cmd/sst@latest
 Or clone and build:
 
 ```bash
-git clone https://github.com/yourusername/sst.git
+git clone https://github.com/dtherhtun/sst.git
 cd sst
 go build -o sst ./cmd/sst
 ```
