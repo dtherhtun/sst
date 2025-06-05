@@ -43,7 +43,7 @@ func main() {
 	}
 
 	if config.SecretName != "" && config.OldNamespace == "" {
-		log.Fatal("When specifying a secret name, you must also specify the source namespace (--old-namespace)")
+		log.Fatal("When specifying a secret name, you must also specify the source namespace (-src-ns)")
 	}
 
 	clients, err := client.SetupClients(config.Kubeconfig, config.OldContext, config.NewContext, config.SSNamespace)
@@ -157,10 +157,10 @@ func parseFlags() types.Config {
 	if home := homedir.HomeDir(); home != "" {
 		flag.StringVar(&config.Kubeconfig, "kubeconfig", filepath.Join(home, ".kube", "config"), "path to kubeconfig file")
 	}
-	flag.StringVar(&config.OldContext, "old-context", "", "Source cluster context")
-	flag.StringVar(&config.NewContext, "new-context", "", "Destination cluster context")
-	flag.StringVar(&config.OldNamespace, "old-namespace", "", "Source namespace")
-	flag.StringVar(&config.NewNamespace, "new-namespace", "", "Destination namespace")
+	flag.StringVar(&config.OldContext, "src-ctx", "", "Source cluster context")
+	flag.StringVar(&config.NewContext, "dst-ctx", "", "Destination cluster context")
+	flag.StringVar(&config.OldNamespace, "src-ns", "", "Source namespace")
+	flag.StringVar(&config.NewNamespace, "dst-ns", "", "Destination namespace")
 	flag.StringVar(&config.ExportMode, "export-mode", string(types.ExportModeYAML), "Export mode: 'yaml' or 'direct'")
 	flag.StringVar(&config.OutputDir, "output-dir", "sealed-secrets", "Output directory for YAML files")
 	flag.StringVar(&config.SSNamespace, "sealed-secret-ns", "kube-system", "Sealed secrets namespace")

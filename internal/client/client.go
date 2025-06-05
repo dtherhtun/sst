@@ -30,7 +30,7 @@ func SetupClients(kubeconfig, oldContext, newContext, ssns string) (*types.Clien
 	}
 
 	if newContext == "" {
-		newClient, err = CreateKubernetesClient(kubeconfig)
+		newClient = oldClient
 	} else {
 		newClient, err = CreateKubernetesClientWithContext(kubeconfig, newContext)
 	}

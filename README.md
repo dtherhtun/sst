@@ -31,30 +31,30 @@ go build -o sst ./cmd/sst
 sst
 
 # Export secrets from a specific namespace to YAML files
-sst --old-namespace=source-ns
+sst -src-ns=source-ns
 
 # Export a specific secret and inject additional values
-sst --old-namespace=source-ns --secret-name=my-secret --from-literal=key=value
+sst -src-ns=source-ns -secret-name=my-secret -from-literal=key=value
 
 # Export secrets from one cluster context to another
-sst --old-context=source-ctx --new-context=dest-ctx --old-namespace=source-ns --new-namespace=dest-ns
+sst -src-ctx=source-ctx -dst-ctx=dest-ctx -src-ns=source-ns -dst-ns=dest-ns
 
 # Directly create sealed secrets in the destination namespace
-sst --export-mode=direct --old-namespace=source-ns --new-namespace=dest-ns
+sst --export-mode=direct -src-ns=source-ns -dst-ns=dest-ns
 ```
 
 ## Options
 
 ```
-  --kubeconfig string         Path to kubeconfig file (default "~/.kube/config")
-  --old-context string        Source cluster context
-  --new-context string        Destination cluster context
-  --old-namespace string      Source namespace
-  --new-namespace string      Destination namespace
-  --export-mode string        Export mode: 'yaml' or 'direct' (default "yaml")
-  --output-dir string         Output directory for YAML files (default "sealed-secrets")
-  --sealed-secret-ns string   Sealed secrets namespace (default "kube-system")
-  --secret-name string        Specific secret name to process (optional)
-  --from-literal key=value    Key-value pairs to inject into secret (can be used multiple times)
-  --from-file string          Files containing key-value pairs to inject into secret (can be used multiple times)
+  -kubeconfig string         Path to kubeconfig file (default "~/.kube/config")
+  -src-ctx string            Source cluster context
+  -dst-ctx string            Destination cluster context
+  -src-ns string             Source namespace
+  -dst-ns string             Destination namespace
+  -export-mode string        Export mode: 'yaml' or 'direct' (default "yaml")
+  -output-dir string         Output directory for YAML files (default "sealed-secrets")
+  -sealed-secret-ns string   Sealed secrets namespace (default "kube-system")
+  -secret-name string        Specific secret name to process (optional)
+  -from-literal key=value    Key-value pairs to inject into secret (can be used multiple times)
+  -from-file string          Files containing key-value pairs to inject into secret (can be used multiple times)
 ```
